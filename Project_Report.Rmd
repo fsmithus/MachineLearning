@@ -1,0 +1,178 @@
+---
+title: "Practical Machine Learning - Final Project"
+author: "Fred Smith"
+date: "Tuesday, May 03, 2016"
+output: html_document
+---
+
+# Executive Summary
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants.
+
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. Any of the other variables may be used to predict with.
+
+This Report describes a prediction model, how it was built, and validated. An estimate of the expected error is provided along with rational for choices that influenced the model design. Lastly, the model was used to predict exercises for a small (20 observation) test set, that was independend of the training and validation data sets.
+
+
+# Background and Data Source
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These types of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks.
+
+One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. This project uses data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+# Exploratory Data Analysis
+
+Read the complete dataset and perform basic analysis.
+```{r}
+setwd("C:/Users/Fred/Documents/Academic/DataScience")
+data <- read.csv("./MachineLearning/Project/pml-training.csv")
+dim(data)
+sum(head(complete.cases(data)))
+```
+
+Since there are 160 variables, and none of the 19,622 observations are complete, I first wish to gain a more complete picture of the nature of the data.
+```{r}
+names(data)
+```
+
+# Data Cleansing
+
+## Observation Outcomes
+The "classe" variable indicates the outcome of each observed exercise:
+* A - Correctly performed
+* B - Throwing elbows to the front
+* C - Lifting the dumbell only half way
+* D - Lowering the dumbell only half way
+* E - Throwing the hips to the front
+
+## Observation Variables
+The data is described in this paper: http://groupware.les.inf.puc-rio.br/public/papers/2013.Velloso.QAR-WLE.pdf. Section 5.1 describes the author's rational for selecting the following features:
+* Belt - mean roll
+* Belt - variance roll
+* Belt - acceleration (paper called for maximum, range, and variance, but these were apparently not in the dataset)
+* Belt - variance acceleration (included because of lack of others) Variances of the gyro and magnetometer were not in the dataset.
+* Arm  - variance acceleration. Maximum and minimum of magnetometer were not in the dataset.
+* Dumbell - None of the variables from the paper were in the dataset (maximum acceleration, variance gyro, and maximum and minimum magnetometer)
+* Glove - The paper calls out glove data, but non is included in the dataset. Forearm variables were substituted instead due to proximity of the wrist to the glove.
+* Forearm - Pitch. Maximum and minimum gyro were not in the dataset.
+
+Because many of the variables that the paper refers to are not included in the dataset, the classifier that is described in the paper cannot be duplicated exactly. The following variables were selected to augment those variables that are available, based on subjective similarity to the missing variables, and intuitions of which variables would provide mechanical differentiation between the failure modes:
+* Arm - total acceleration
+* Forearm - minimum, maximum, and variance of pitch
+* Dumbell - total and variance of acceleration, and pitch
+
+```{r}
+select.features <- c(
+        "classe",                       # Observations
+        "avg_roll_belt",                # Variables selected in paper
+        "var_roll_belt",
+        "total_accel_belt",
+        "var_total_accel_belt",
+        "var_accel_arm",
+        "amplitude_pitch_forearm",
+        "total_accel_arm",              # Variables added in place of missing variables
+        "min_pitch_forearm",
+        "max_picth_forearm",
+        "var_pitch_forearm",
+        "total_accel_dumbbell",
+        "var_accel_dumbbell",
+        "var_pitch_dumbbell"
+        )
+select.features
+select.data <- data[,select.features]
+dim(select.data)
+sum(complete.cases(select.data))
+```
+
+The above selections resulted in a very sparse matrix. Therefore, the following variables were chosen based on availability of data values, and mechanical intuitions about the movements being measured.
+```{r}
+select.features <- c(
+        "classe",                       # Observations
+        "roll_belt",
+        "pitch_belt",
+        "total_accel_belt",
+        "roll_arm",
+        "pitch_arm",
+        "yaw_arm",
+        "total_accel_arm",
+        "roll_dumbbell",
+        "pitch_dumbbell",
+        "yaw_dumbbell"
+        )
+select.features
+select.data <- data[,select.features]
+dim(select.data)
+sum(complete.cases(select.data))
+```
+
+
+
+# Training and Test Datasets
+
+Now that we have a better understanding of the full dataset, we can randomly partition the full set into training and test sets used to calculate and validate (respectively) any proposed models. Per best practices, 70% of the records, partitioned on the outcome "classe" variable, will be randomly selected for the training dataset, and the remaining 30% will be used to validate any models. In order to make these results repeatable, the required libraries are loaded, and the random seed is set to start the process.
+
+```{r}
+library(lattice); library(ggplot2); library(caret)
+set.seed(5309)
+inTrain  <- createDataPartition(y=select.data$classe,p=0.7,list=FALSE)
+training <- select.data[inTrain,]
+testing  <- select.data[-inTrain,]
+```
+
+
+
+# Recursive Partitioning (rpart) Classification Tree
+
+```{r}
+library(rpart); library(rattle)
+set.seed(867)
+mod.rpart <- train(classe~.,method="rpart",data=training)
+pred.rpart <- predict(mod.rpart,newdata=testing)
+confusionMatrix(pred.rpart,testing$classe)
+fancyRpartPlot(mod.rpart$finalModel)
+```
+
+The recursive partitioning model did not perform well at all, with only 45% classification accuracy. In fact, it was unable to classify class D exercises at all.
+
+
+
+# Random Forest (rf)
+
+The paper authors selected a Random Forest approach with bagging to build their classification model.
+
+```{r}
+library(randomForest)
+set.seed(867)
+mod.rf <- train(classe~.,method="rf",data=training,trControl = trainControl(number = 4))
+pred.rf <- predict(mod.rf,newdata=testing)
+confusionMatrix(pred.rf,testing$classe)
+```
+
+This simple Random Forest model, with variables picked by subjective intuition produced overall accuracy of 94.4% on the test dataset. The authors also used a bagging procedure to cross-validate during training. But since this model is likely to get at least an 80% on the final classification quiz, I will stop here.
+
+
+
+# Final Quiz
+
+The Random Forest model above is now run against the quiz dataset to produce the final project predictions.
+
+```{r}
+setwd("C:/Users/Fred/Documents/Academic/DataScience")
+quiz.data <- read.csv("./MachineLearning/Project/pml-testing.csv")
+quiz.select.data <- quiz.data[,select.features[2:11]]
+quiz.answers <- predict(mod.rf,newdata=quiz.select.data)
+quiz.answers
+```
+
+These classifications have been submitted to the Coursera project/final quiz and received a grade of 18/20 (90%).
+
+
+
+
+
+Appendix A - Environment
+
+```{r}
+sessionInfo()
+```
